@@ -17,7 +17,7 @@ public class InventoryChecker {
              Statement stmt = conn.createStatement()) {
             stmt.execute(sql);
 
-            // Если таблица пустая, заполняем базовыми продуктами
+            // if table is empty, fill with base products
             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM inventory");
             if (rs.getInt(1) == 0) {
                 stmt.execute("INSERT INTO inventory (ingredient, qty) VALUES ('Burger', 100), ('Cola', 200)");
@@ -29,9 +29,9 @@ public class InventoryChecker {
 
     public void reserveItems(Map<String, Integer> requiredItems) {
         try (Connection conn = DriverManager.getConnection(dbUrl)) {
-            conn.setAutoCommit(false); // Начинаем транзакцию
+            conn.setAutoCommit(false); // start transaction
 
-            // 1. Проверяем наличие
+            // check availability
             for (Map.Entry<String, Integer> entry : requiredItems.entrySet()) {
                 String checkSql = "SELECT qty FROM inventory WHERE ingredient = ?";
                 try (PreparedStatement pstmt = conn.prepareStatement(checkSql)) {
@@ -44,7 +44,7 @@ public class InventoryChecker {
                 }
             }
 
-            // 2. Списываем
+            // update inventory
             for (Map.Entry<String, Integer> entry : requiredItems.entrySet()) {
                 String updateSql = "UPDATE inventory SET qty = qty - ? WHERE ingredient = ?";
                 try (PreparedStatement pstmt = conn.prepareStatement(updateSql)) {
@@ -68,10 +68,10 @@ public class InventoryChecker {
                 pstmt.setInt(1, entry.getValue());
                 pstmt.setString(2, entry.getKey());
                 pstmt.executeUpdate();
-                System.out.println("[Inventory] Возвращено на склад: " + entry.getValue() + " шт. " + entry.getKey());
+                System.out.println("[Inventory] Returned to stash: " + entry.getValue() + " pcs. " + entry.getKey());
             }
         } catch (SQLException e) {
-            throw new RuntimeException("Ошибка возврата на склад", e);
+            throw new RuntimeException("Cant return to stash", e);
         }
     }
 }

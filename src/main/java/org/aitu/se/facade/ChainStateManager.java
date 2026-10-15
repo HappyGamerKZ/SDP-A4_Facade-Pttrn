@@ -4,7 +4,7 @@ import java.sql.*;
 import java.util.HashMap;
 import java.util.Map;
 
-public class ChainStateManager {
+public class ChainStateManager implements IChainStateManager {
     private final String dbUrl;
 
     public ChainStateManager(String dbUrl) {
@@ -26,6 +26,7 @@ public class ChainStateManager {
         }
     }
 
+    @Override
     public void updateState(String orderId, String ticketId, ChainState state) {
         String sql = "INSERT INTO chain_state(order_id, ticket_id, state) VALUES(?,?,?) "
                 + "ON CONFLICT(order_id) DO UPDATE SET ticket_id=excluded.ticket_id, state=excluded.state";
@@ -42,6 +43,7 @@ public class ChainStateManager {
     }
 
     // method for recovery (read pending transactions)
+    @Override
     public Map<String, ChainStateRecord> getIncompleteTransactions() {
         Map<String, ChainStateRecord> incomplete = new HashMap<>();
         // Ищем все записи, которые зависли на шагах PENDING
