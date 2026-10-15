@@ -6,6 +6,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import org.junit.jupiter.api.io.TempDir;
+import java.nio.file.Path;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -15,14 +18,29 @@ class AdminCompensationFacadeTest {
 
     private AdminCompensationFacade adminFacade;
 
+    @TempDir
+    Path tempDir;
+
+    private String testDbUrl() {
+        return "jdbc:sqlite:" + tempDir.resolve("test.db")
+                .toAbsolutePath()
+                .toString()
+                .replace('\\', '/');
+    }
+
     @BeforeEach
     void setUp() {
-        String dbUrl = "jdbc:sqlite::memory:";
-        OrderQueue queue = new OrderQueue(dbUrl, dbUrl);
-        CookingStationAllocator allocator = new CookingStationAllocator(dbUrl);
-        ChainStateManager manager = new ChainStateManager(dbUrl);
+        String dbUrl = testDbUrl();
 
-        adminFacade = new AdminCompensationFacade(queue, allocator, manager);
+        OrderQueue queue = new OrderQueue(dbUrl, dbUrl);
+        CookingStationAllocator allocator =
+                new CookingStationAllocator(dbUrl);
+        ChainStateManager manager =
+                new ChainStateManager(dbUrl);
+
+        adminFacade = new AdminCompensationFacade(
+                queue, allocator, manager
+        );
     }
 
     @Test

@@ -4,6 +4,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import org.junit.jupiter.api.io.TempDir;
+import java.nio.file.Path;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -14,11 +17,21 @@ class OrderQueueIntegrationTest {
     private OrderQueue orderQueue;
     private final String dbUrl = "jdbc:sqlite::memory:";
 
-    @BeforeEach
-    void setUp() {
-        orderQueue = new OrderQueue(dbUrl, dbUrl);
+    @TempDir
+    Path tempDir;
+
+    private String testDbUrl() {
+        return "jdbc:sqlite:" + tempDir.resolve("test.db")
+                .toAbsolutePath()
+                .toString()
+                .replace('\\', '/');
     }
 
+    @BeforeEach
+    void setUp() {
+        String dbUrl = testDbUrl();
+        orderQueue = new OrderQueue(dbUrl, dbUrl);
+    }
     @Test
     @DisplayName("Прием нового заказа и успешное списание со склада")
     void testAcceptNewOrderSuccess() {

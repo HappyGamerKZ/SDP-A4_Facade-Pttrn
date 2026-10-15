@@ -7,6 +7,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import org.junit.jupiter.api.io.TempDir;
+import java.nio.file.Path;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -20,16 +23,31 @@ class RestaurantOrderFacadeTest {
     private CookingStationAllocator kitchenAllocator;
     private BillingModule billingModule;
 
-    private final String dbUrl = "jdbc:sqlite::memory:";
+    private String dbUrl;
+
+    @TempDir
+    Path tempDir;
+
+    private String testDbUrl() {
+        return "jdbc:sqlite:" + tempDir.resolve("test.db")
+                .toAbsolutePath()
+                .toString()
+                .replace('\\', '/');
+    }
 
     @BeforeEach
     void setUp() {
+        dbUrl = testDbUrl();
+
         orderQueue = new OrderQueue(dbUrl);
         kitchenAllocator = new CookingStationAllocator(dbUrl);
         billingModule = new BillingModule(dbUrl);
         stateManager = new ChainStateManager(dbUrl);
 
-        facade = new RestaurantOrderFacade(orderQueue, kitchenAllocator, billingModule, stateManager);
+        facade = new RestaurantOrderFacade(
+                orderQueue, kitchenAllocator,
+                billingModule, stateManager
+        );
     }
 
     @Test
