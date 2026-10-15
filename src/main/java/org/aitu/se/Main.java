@@ -1,9 +1,9 @@
 package org.aitu.se;
 
+import org.aitu.se.acceptance.OrderQueue;
+import org.aitu.se.backhouse.CookingStationAllocator;
+import org.aitu.se.checkout.BillingModule;
 import org.aitu.se.facade.*;
-import org.aitu.se.acceptance.*;
-import org.aitu.se.backhouse.*;
-import org.aitu.se.checkout.*;
 
 import java.util.HashMap;
 import java.util.Map;

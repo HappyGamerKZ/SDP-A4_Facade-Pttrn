@@ -5,14 +5,26 @@ import org.aitu.se.backhouse.CookingStationAllocator;
 
 // Фасад для ручного вмешательства администратора
 public class AdminCompensationFacade {
-    private final OrderQueue orderQueue;
-    private final CookingStationAllocator kitchenAllocator;
-    private final ChainStateManager stateManager;
+    private final IOrderQueue orderQueue;
+    private final ICookingStationAllocator kitchenAllocator;
+    private final IChainStateManager stateManager;
 
-    public AdminCompensationFacade(String kitchen_db_url, String checkout_db_url, String inv_check_db_url, String chain_st_db_link) {
-        this.orderQueue = new OrderQueue(checkout_db_url, inv_check_db_url);
-        this.kitchenAllocator = new CookingStationAllocator(kitchen_db_url);
-        this.stateManager = new ChainStateManager(chain_st_db_link);
+    // 1. Главный конструктор (Dependency Injection) — используется для Unit-тестов и гибкой настройки
+    public AdminCompensationFacade(IOrderQueue orderQueue,
+                                   ICookingStationAllocator kitchenAllocator,
+                                   IChainStateManager stateManager) {
+        this.orderQueue = orderQueue;
+        this.kitchenAllocator = kitchenAllocator;
+        this.stateManager = stateManager;
+    }
+
+    // 2. Вспомогательный конструктор — инициализирует подсистемы по URL баз данных (для Main)
+    public AdminCompensationFacade(String kitchenDbUrl, String intakeDbUrl, String invCheckDbUrl, String chainStateDbUrl) {
+        this(
+                new OrderQueue(intakeDbUrl, invCheckDbUrl),
+                new CookingStationAllocator(kitchenDbUrl),
+                new ChainStateManager(chainStateDbUrl)
+        );
     }
 
     // Ручная принудительная отмена заказа (например, клиент передумал во время готовки)
