@@ -2,18 +2,26 @@ package org.aitu.se.acceptance;
 
 import java.util.Map;
 
+/**
+ * Entity of subsystem A: an intake request with a strict, persisted lifecycle.
+ *
+ * <p>Allowed transitions:
+ * <ul>
+ *   <li>{@code NEW -> INVENTORY_RESERVED} — stock reserved successfully</li>
+ *   <li>{@code NEW -> CANCELLED} — rejected before reservation (e.g. out of stock)</li>
+ *   <li>{@code INVENTORY_RESERVED -> CANCELLED} — compensated after a downstream failure</li>
+ * </ul>
+ */
 public class IntakeRequest {
-    final private String orderId;
-    private IntakeStatus status; // Используем наш enum вместо String
+    private final String orderId;
     private final Map<String, Integer> items;
+    private IntakeStatus status;
 
     public IntakeRequest(String orderId, Map<String, Integer> items) {
-        this.orderId = orderId;
-        this.items = items;
-        this.status = IntakeStatus.NEW; // Присваиваем одно из строгих значений
+        this(orderId, items, IntakeStatus.NEW);
     }
 
-    // Используется в IntakeRepository при ЧТЕНИИ из базы данных
+    /** Used by the repository when reading an existing request back from the database. */
     public IntakeRequest(String orderId, Map<String, Integer> items, IntakeStatus status) {
         this.orderId = orderId;
         this.items = items;
@@ -22,16 +30,16 @@ public class IntakeRequest {
 
     public void transitionTo(IntakeStatus newStatus) {
         if (this.status == IntakeStatus.CANCELLED) {
-            throw new IllegalStateException("Нельзя изменить статус отмененного заказа.");
+            throw new IllegalStateException("A cancelled order cannot change its status.");
         }
-
-        if (this.status == IntakeStatus.NEW && newStatus == IntakeStatus.INVENTORY_RESERVED) {
-            this.status = newStatus;
-        } else if (this.status == IntakeStatus.INVENTORY_RESERVED && newStatus == IntakeStatus.CANCELLED) {
-            this.status = newStatus; // Сценарий отката (компенсации) от Фасада
-        } else {
-            throw new IllegalStateException("Запрещенный переход статуса: " + this.status + " -> " + newStatus);
+        boolean allowed =
+                (this.status == IntakeStatus.NEW && newStatus == IntakeStatus.INVENTORY_RESERVED)
+                        || (this.status == IntakeStatus.NEW && newStatus == IntakeStatus.CANCELLED)
+                        || (this.status == IntakeStatus.INVENTORY_RESERVED && newStatus == IntakeStatus.CANCELLED);
+        if (!allowed) {
+            throw new IllegalStateException("Forbidden status transition: " + this.status + " -> " + newStatus);
         }
+        this.status = newStatus;
     }
 
     public String getOrderId() {

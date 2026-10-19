@@ -3,81 +3,111 @@ package org.aitu.se.acceptance;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
 import org.junit.jupiter.api.io.TempDir;
-import java.nio.file.Path;
 
-import java.util.HashMap;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
+/**
+ * Integration tests for subsystem A, exercised through its own public interface and its own
+ * database, without the facade.
+ */
 class OrderQueueIntegrationTest {
-
-    private OrderQueue orderQueue;
-    private final String dbUrl = "jdbc:sqlite::memory:";
 
     @TempDir
     Path tempDir;
 
-    private String testDbUrl() {
-        return "jdbc:sqlite:" + tempDir.resolve("test.db")
-                .toAbsolutePath()
-                .toString()
-                .replace('\\', '/');
-    }
+    private String dbUrl;
+    private OrderQueue orderQueue;
 
     @BeforeEach
     void setUp() {
-        String dbUrl = testDbUrl();
-        orderQueue = new OrderQueue(dbUrl, dbUrl);
+        dbUrl = "jdbc:sqlite:" + tempDir.resolve("acceptance.db")
+                .toAbsolutePath().toString().replace('\\', '/');
+        orderQueue = new OrderQueue(dbUrl);
     }
-    @Test
-    @DisplayName("Прием нового заказа и успешное списание со склада")
-    void testAcceptNewOrderSuccess() {
-        Map<String, Integer> items = new HashMap<>();
-        items.put("Burger", 2);
 
-        String orderId = orderQueue.acceptNewOrder(items);
-        assertNotNull(orderId);
-
-        IntakeRequest request = orderQueue.getRequest(orderId);
-        assertNotNull(request);
-        assertEquals(IntakeStatus.INVENTORY_RESERVED, request.getStatus());
+    private static Map<String, Integer> orderOf(String dish, int qty) {
+        Map<String, Integer> items = new LinkedHashMap<>();
+        items.put(dish, qty);
+        return items;
     }
 
     @Test
-    @DisplayName("Отказ при недостаточном количестве продуктов на складе")
-    void testAcceptNewOrderOutOfStock() {
-        Map<String, Integer> items = new HashMap<>();
-        items.put("Burger", 9999); // Больше, чем есть на складе
+    @DisplayName("A new order reserves stock and is persisted as INVENTORY_RESERVED")
+    void acceptReservesStock() {
+        orderQueue.acceptNewOrder("ORD-1", orderOf("Burger", 2));
 
-        assertThrows(OutOfStockException.class, () -> orderQueue.acceptNewOrder(items));
+        assertEquals(IntakeStatus.INVENTORY_RESERVED, orderQueue.getOrder("ORD-1").getStatus());
+        assertEquals(98, orderQueue.stockOf("Burger"));
     }
 
     @Test
-    @DisplayName("Компенсация с возвратом ингредиентов на склад")
-    void testCompensateAndReturnItems() {
-        Map<String, Integer> items = new HashMap<>();
-        items.put("Burger", 2);
+    @DisplayName("An unaffordable order is persisted as CANCELLED and leaves the stock intact")
+    void acceptOutOfStock() {
+        assertThrows(OutOfStockException.class, () -> orderQueue.acceptNewOrder("ORD-2", orderOf("Burger", 9999)));
 
-        String orderId = orderQueue.acceptNewOrder(items);
-        orderQueue.compensateAndReturnItems(orderId);
-
-        IntakeRequest request = orderQueue.getRequest(orderId);
-        assertEquals(IntakeStatus.CANCELLED, request.getStatus());
+        assertEquals(IntakeStatus.CANCELLED, orderQueue.getOrder("ORD-2").getStatus());
+        assertEquals(100, orderQueue.stockOf("Burger"));
     }
 
     @Test
-    @DisplayName("Компенсация без возврата ингредиентов (продукты уничтожены)")
-    void testCompensateWithoutReturningItems() {
-        Map<String, Integer> items = new HashMap<>();
-        items.put("Burger", 2);
+    @DisplayName("Compensation with restock returns the reserved ingredients")
+    void cancelAndRestock() {
+        orderQueue.acceptNewOrder("ORD-3", orderOf("Burger", 2));
 
-        String orderId = orderQueue.acceptNewOrder(items);
-        orderQueue.compensateWithoutReturningItems(orderId);
+        orderQueue.cancelAndRestock("ORD-3");
 
-        IntakeRequest request = orderQueue.getRequest(orderId);
-        assertEquals(IntakeStatus.CANCELLED, request.getStatus());
+        assertEquals(IntakeStatus.CANCELLED, orderQueue.getOrder("ORD-3").getStatus());
+        assertEquals(100, orderQueue.stockOf("Burger"));
+    }
+
+    @Test
+    @DisplayName("Compensation without restock writes the ingredients off as a loss")
+    void cancelWithoutRestock() {
+        orderQueue.acceptNewOrder("ORD-4", orderOf("Burger", 2));
+
+        orderQueue.cancelWithoutRestock("ORD-4");
+
+        assertEquals(IntakeStatus.CANCELLED, orderQueue.getOrder("ORD-4").getStatus());
+        assertEquals(98, orderQueue.stockOf("Burger"));
+    }
+
+    @Test
+    @DisplayName("Compensating an unknown order is a harmless no-op")
+    void compensateUnknownOrderIsNoOp() {
+        assertDoesNotThrow(() -> orderQueue.cancelAndRestock("NO-SUCH"));
+        assertDoesNotThrow(() -> orderQueue.cancelWithoutRestock("NO-SUCH"));
+    }
+
+    @Test
+    @DisplayName("State and stock survive a restart of the subsystem")
+    void stateSurvivesRestart() {
+        orderQueue.acceptNewOrder("ORD-5", orderOf("Burger", 1));
+
+        OrderQueue restarted = new OrderQueue(dbUrl);
+
+        assertEquals(IntakeStatus.INVENTORY_RESERVED, restarted.getOrder("ORD-5").getStatus());
+        assertEquals(99, restarted.stockOf("Burger"));
+    }
+
+    @Test
+    @DisplayName("Duplicate order ids are rejected")
+    void duplicateOrderId() {
+        orderQueue.acceptNewOrder("ORD-6", orderOf("Burger", 1));
+
+        assertThrows(IllegalStateException.class, () -> orderQueue.acceptNewOrder("ORD-6", orderOf("Burger", 1)));
+    }
+
+    @Test
+    @DisplayName("An unknown order is reported as absent")
+    void unknownOrder() {
+        assertNull(orderQueue.getOrder("NO-SUCH"));
     }
 }

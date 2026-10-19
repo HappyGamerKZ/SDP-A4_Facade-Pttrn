@@ -2,10 +2,12 @@ package org.aitu.se.facade;
 
 import java.util.Map;
 
+/** Durable store of the facade's chain progress. */
 public interface IChainStateManager {
+
     void updateState(String orderId, String ticketId, ChainState state);
 
-    // Вспомогательный класс-обертка для возврата данных при восстановлении
+    /** Immutable snapshot of a single chain record. */
     class ChainStateRecord {
         public final String orderId;
         public final String ticketId;
@@ -18,8 +20,9 @@ public interface IChainStateManager {
         }
     }
 
+    /** All transactions that are not finished yet (STARTED, PENDING_B, PENDING_C). */
     Map<String, ChainStateRecord> getIncompleteTransactions();
 
-    // null, если для заказа нет записи
+    /** Returns the record for the order, or {@code null} if there is none. */
     ChainStateRecord findByOrderId(String orderId);
 }

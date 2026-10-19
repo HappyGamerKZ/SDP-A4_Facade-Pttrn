@@ -1,6 +1,9 @@
 package org.aitu.se.facade;
 
-// Итог одной операции фасада для клиента: какие записи созданы и в каком состоянии осталась цепочка
+/**
+ * Outcome of a single facade operation: which records were created and in which state the chain
+ * ended up. This is what a client sees instead of a bare {@code void}.
+ */
 public record OrderResult(String orderId,
                           String ticketId,
                           String receiptId,
@@ -19,9 +22,9 @@ public record OrderResult(String orderId,
         return new OrderResult(orderId, ticketId, null, ChainState.COMPENSATED_AT_C, failureReason);
     }
 
-    // Цепочка прервана "сбоем питания" и осталась на диске в PENDING_C до восстановления
+    /** The chain was interrupted after step B and is left on disk in {@code PENDING_C}. */
     static OrderResult interrupted(String orderId, String ticketId) {
-        return new OrderResult(orderId, ticketId, null, ChainState.PENDING_C, "Simulated power loss");
+        return new OrderResult(orderId, ticketId, null, ChainState.PENDING_C, "Simulated crash after the kitchen step");
     }
 
     public boolean isCompleted() {

@@ -1,45 +1,110 @@
 package org.aitu.se.facade;
 
-import org.aitu.se.acceptance.OrderQueue;
-import org.aitu.se.backhouse.CookingStationAllocator;
+import org.aitu.se.acceptance.IOrderQueue;
+import org.aitu.se.acceptance.IntakeRequest;
+import org.aitu.se.backhouse.ICookingStationAllocator;
+import org.aitu.se.checkout.CheckoutStatus;
+import org.aitu.se.checkout.IBillingModule;
+import org.aitu.se.checkout.Receipt;
 
-// Фасад для ручного вмешательства администратора
+import java.util.Map;
+
+/**
+ * Secondary facade for administrative operations.
+ *
+ * <p>Provides inspection of the persisted state and a state-aware manual cancellation. Unlike a
+ * blind "cancel", {@link #forceCancelOrder(String)} reads the current chain state, refuses to
+ * touch unknown or already-compensated orders and refunds the customer when the order was paid.
+ */
 public class AdminCompensationFacade {
+
     private final IOrderQueue orderQueue;
     private final ICookingStationAllocator kitchenAllocator;
+    private final IBillingModule billingModule;
     private final IChainStateManager stateManager;
 
-    // 1. Главный конструктор (Dependency Injection) — используется для Unit-тестов и гибкой настройки
     public AdminCompensationFacade(IOrderQueue orderQueue,
                                    ICookingStationAllocator kitchenAllocator,
+                                   IBillingModule billingModule,
                                    IChainStateManager stateManager) {
         this.orderQueue = orderQueue;
         this.kitchenAllocator = kitchenAllocator;
+        this.billingModule = billingModule;
         this.stateManager = stateManager;
     }
 
-    // 2. Вспомогательный конструктор — инициализирует подсистемы по URL баз данных (для Main)
-    public AdminCompensationFacade(String kitchenDbUrl, String intakeDbUrl, String invCheckDbUrl, String chainStateDbUrl) {
-        this(
-                new OrderQueue(intakeDbUrl, invCheckDbUrl),
-                new CookingStationAllocator(kitchenDbUrl),
-                new ChainStateManager(chainStateDbUrl)
-        );
+    // ------------------------------------------------------------------
+    // INSPECTION
+    // ------------------------------------------------------------------
+
+    /** Returns the persisted chain record, or {@code null} if the order is unknown. */
+    public IChainStateManager.ChainStateRecord getChainState(String orderId) {
+        return stateManager.findByOrderId(orderId);
     }
 
-    // Ручная принудительная отмена заказа (например, клиент передумал во время готовки)
-    public void forceCancelOrder(String orderId, String ticketId) {
-        System.out.println("\n[AdminFacade] ВНИМАНИЕ: Запущен ручной откат заказа " + orderId);
+    /** Returns every chain that is not finished yet. */
+    public Map<String, IChainStateManager.ChainStateRecord> listPendingOrders() {
+        return stateManager.getIncompleteTransactions();
+    }
 
-        if (ticketId != null) {
-            System.out.println("[AdminFacade] Отменяем кухонный тикет...");
-            kitchenAllocator.compensateTicket(ticketId);
+    /** Returns the persisted order, or {@code null} if unknown. */
+    public IntakeRequest getOrder(String orderId) {
+        return orderQueue.getOrder(orderId);
+    }
+
+    // ------------------------------------------------------------------
+    // MANUAL CANCELLATION
+    // ------------------------------------------------------------------
+
+    /**
+     * Cancels an order based on its persisted state.
+     *
+     * @return {@code false} if the order is unknown or already finished; {@code true} if it was cancelled
+     */
+    public boolean forceCancelOrder(String orderId) {
+        IChainStateManager.ChainStateRecord record = stateManager.findByOrderId(orderId);
+        if (record == null) {
+            System.out.println("[AdminFacade] Unknown order " + orderId + ", nothing to do.");
+            return false;
         }
+        System.out.println("[AdminFacade] Cancelling order " + orderId + " from state " + record.state);
 
-        System.out.println("[AdminFacade] Отменяем первичную заявку (без возврата продуктов)...");
-        orderQueue.compensateWithoutReturningItems(orderId);
+        switch (record.state) {
+            case COMPLETED -> {
+                refundIfPaid(record.ticketId);
+                if (record.ticketId != null) {
+                    kitchenAllocator.compensateTicket(record.ticketId);
+                }
+                orderQueue.cancelWithoutRestock(orderId);
+                stateManager.updateState(orderId, record.ticketId, ChainState.COMPENSATED_AT_C);
+            }
+            case PENDING_C -> {
+                if (record.ticketId != null) {
+                    kitchenAllocator.compensateTicket(record.ticketId);
+                }
+                orderQueue.cancelWithoutRestock(orderId);
+                stateManager.updateState(orderId, record.ticketId, ChainState.COMPENSATED_AT_C);
+            }
+            case STARTED, PENDING_B -> {
+                orderQueue.cancelAndRestock(orderId);
+                stateManager.updateState(orderId, null, ChainState.COMPENSATED_AT_B);
+            }
+            case COMPENSATED_AT_A, COMPENSATED_AT_B, COMPENSATED_AT_C, REJECTED -> {
+                System.out.println("[AdminFacade] Order " + orderId + " is already finished (" + record.state + ").");
+                return false;
+            }
+        }
+        System.out.println("[AdminFacade] Order " + orderId + " cancelled.");
+        return true;
+    }
 
-        stateManager.updateState(orderId, ticketId, ChainState.COMPENSATED_AT_C);
-        System.out.println("[AdminFacade] Ручной откат успешно завершен.");
+    private void refundIfPaid(String ticketId) {
+        if (ticketId == null) {
+            return;
+        }
+        Receipt receipt = billingModule.findByTicketId(ticketId);
+        if (receipt != null && receipt.getStatus() == CheckoutStatus.PAID_AND_DISPATCHED) {
+            billingModule.refund(receipt.getReceiptId());
+        }
     }
 }

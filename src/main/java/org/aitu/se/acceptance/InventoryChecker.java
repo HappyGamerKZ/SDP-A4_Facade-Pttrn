@@ -1,89 +1,37 @@
 package org.aitu.se.acceptance;
 
-import java.sql.*;
 import java.util.Map;
 
+/**
+ * Pure inventory business rules for subsystem A.
+ *
+ * <p>Holds no state and performs no I/O: it only validates a stock snapshot against a requested
+ * order. Persistence is the responsibility of {@link InventoryRepository}. This separation keeps
+ * the rule independently testable and free of SQL.
+ */
 public class InventoryChecker {
-    private final String dbUrl;
 
-    public InventoryChecker(String dbUrl) {
-        this.dbUrl = dbUrl;
-        initializeDatabase();
-    }
-
-    private void initializeDatabase() {
-        String sql = "CREATE TABLE IF NOT EXISTS inventory (ingredient TEXT PRIMARY KEY, qty INTEGER);";
-        try (Connection conn = DriverManager.getConnection(dbUrl);
-             Statement stmt = conn.createStatement()) {
-            stmt.execute(sql);
-
-            // if table is empty, fill with base products
-            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM inventory");
-            if (rs.getInt(1) == 0) {
-                stmt.execute("INSERT INTO inventory (ingredient, qty) VALUES ('Burger', 100), ('Cola', 200)");
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("Не удалось инициализировать Склад", e);
+    /**
+     * Verifies that the requested quantities can be fulfilled from the given stock snapshot.
+     *
+     * @param stock     current stock, ingredient -> available quantity
+     * @param requested requested quantities, ingredient -> quantity
+     * @throws OutOfStockException if a quantity is invalid or not enough stock is available
+     */
+    public void ensureSufficientStock(Map<String, Integer> stock, Map<String, Integer> requested) {
+        if (requested == null || requested.isEmpty()) {
+            throw new OutOfStockException("The order is empty");
         }
-    }
-
-    public void reserveItems(Map<String, Integer> requiredItems) {
-        try (Connection conn = DriverManager.getConnection(dbUrl)) {
-            conn.setAutoCommit(false); // start transaction
-
-            // check availability
-            for (Map.Entry<String, Integer> entry : requiredItems.entrySet()) {
-                String checkSql = "SELECT qty FROM inventory WHERE ingredient = ?";
-                try (PreparedStatement pstmt = conn.prepareStatement(checkSql)) {
-                    pstmt.setString(1, entry.getKey());
-                    ResultSet rs = pstmt.executeQuery();
-                    if (!rs.next() || rs.getInt("qty") < entry.getValue()) {
-                        conn.rollback();
-                        throw new OutOfStockException("Недостаточно на складе: " + entry.getKey());
-                    }
-                }
+        for (Map.Entry<String, Integer> entry : requested.entrySet()) {
+            int requestedQty = entry.getValue() == null ? 0 : entry.getValue();
+            if (requestedQty <= 0) {
+                throw new OutOfStockException("Invalid quantity for '" + entry.getKey() + "': " + entry.getValue());
             }
-
-            // update inventory
-            for (Map.Entry<String, Integer> entry : requiredItems.entrySet()) {
-                String updateSql = "UPDATE inventory SET qty = qty - ? WHERE ingredient = ?";
-                try (PreparedStatement pstmt = conn.prepareStatement(updateSql)) {
-                    pstmt.setInt(1, entry.getValue());
-                    pstmt.setString(2, entry.getKey());
-                    pstmt.executeUpdate();
-                    System.out.println("[Inventory] Зарезервировано: " + entry.getValue() + " шт. " + entry.getKey());
-                }
+            int available = stock.getOrDefault(entry.getKey(), 0);
+            if (available < requestedQty) {
+                throw new OutOfStockException("Not enough stock for '" + entry.getKey()
+                        + "' (requested " + requestedQty + ", available " + available + ")");
             }
-            conn.commit();
-        } catch (SQLException e) {
-            throw new RuntimeException("Ошибка работы со складом", e);
-        }
-    }
-
-    public int getQuantity(String ingredient) {
-        String sql = "SELECT qty FROM inventory WHERE ingredient = ?";
-        try (Connection conn = DriverManager.getConnection(dbUrl);
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, ingredient);
-            ResultSet rs = pstmt.executeQuery();
-            return rs.next() ? rs.getInt("qty") : 0;
-        } catch (SQLException e) {
-            throw new RuntimeException("Cant read stash", e);
-        }
-    }
-
-    public void returnItems(Map<String, Integer> returnedItems) {
-        String updateSql = "UPDATE inventory SET qty = qty + ? WHERE ingredient = ?";
-        try (Connection conn = DriverManager.getConnection(dbUrl);
-             PreparedStatement pstmt = conn.prepareStatement(updateSql)) {
-            for (Map.Entry<String, Integer> entry : returnedItems.entrySet()) {
-                pstmt.setInt(1, entry.getValue());
-                pstmt.setString(2, entry.getKey());
-                pstmt.executeUpdate();
-                System.out.println("[Inventory] Returned to stash: " + entry.getValue() + " pcs. " + entry.getKey());
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("Cant return to stash", e);
         }
     }
 }

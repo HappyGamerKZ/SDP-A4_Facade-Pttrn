@@ -1,88 +1,89 @@
 package org.aitu.se.acceptance;
 
-import org.aitu.se.facade.IOrderQueue;
-
 import java.util.Map;
-import java.util.UUID;
 
+/**
+ * Subsystem A — order intake and inventory reservation.
+ *
+ * <p>Orchestrates the pure {@link InventoryChecker} rule and the {@link InventoryRepository}
+ * gateway; it does not contain business rules itself.
+ */
 public class OrderQueue implements IOrderQueue {
     private final IntakeRepository repository;
+    private final InventoryRepository inventoryRepository;
     private final InventoryChecker inventoryChecker;
 
-    // --------------------------------------------------------
-    // КОНСТРУКТОРЫ
-    // --------------------------------------------------------
+    public OrderQueue(String intakeDbUrl, String inventoryDbUrl) {
+        this(new IntakeRepository(intakeDbUrl), new InventoryRepository(inventoryDbUrl), new InventoryChecker());
+    }
 
-    // Перегруженный конструктор с 1 аргументом (для Unit-тестов и единой БД)
+    /** Convenience constructor for a single shared database file. */
     public OrderQueue(String dbUrl) {
         this(dbUrl, dbUrl);
     }
 
-    // Основной конструктор с 2 аргументами (для раздельных БД)
-    public OrderQueue(String intakeDbUrl, String invCheckDbUrl) {
-        this.repository = new IntakeRepository(intakeDbUrl);
-        this.inventoryChecker = new InventoryChecker(invCheckDbUrl);
-    }
-
-    // Конструктор для Pure Unit-тестов с Mock-объектами (опционально)
-    public OrderQueue(IntakeRepository repository, InventoryChecker inventoryChecker) {
+    public OrderQueue(IntakeRepository repository, InventoryRepository inventoryRepository, InventoryChecker inventoryChecker) {
         this.repository = repository;
+        this.inventoryRepository = inventoryRepository;
         this.inventoryChecker = inventoryChecker;
     }
 
-    // --------------------------------------------------------
-    // НОРМАЛЬНЫЙ ПОТОК (Шаг А успешен)
-    // --------------------------------------------------------
     @Override
-    public String acceptNewOrder(Map<String, Integer> items) {
-        String orderId = UUID.randomUUID().toString();
+    public void acceptNewOrder(String orderId, Map<String, Integer> items) {
+        if (repository.findById(orderId) != null) {
+            throw new IllegalStateException("Order " + orderId + " already exists");
+        }
+
         IntakeRequest request = new IntakeRequest(orderId, items);
+        repository.save(request); // status NEW is persisted as well
 
-        // 1. Проверяем и списываем продукты со склада
-        inventoryChecker.reserveItems(items);
+        try {
+            inventoryChecker.ensureSufficientStock(inventoryRepository.snapshot(), items);
+            inventoryRepository.decrement(items);
+            request.transitionTo(IntakeStatus.INVENTORY_RESERVED);
+            repository.save(request);
+        } catch (OutOfStockException e) {
+            request.transitionTo(IntakeStatus.CANCELLED);
+            repository.save(request);
+            throw e;
+        }
 
-        // 2. Если продуктов хватило - переводим статус и сохраняем в БД
-        request.transitionTo(IntakeStatus.INVENTORY_RESERVED);
+        System.out.println("[Acceptance] Order " + orderId + " accepted, status " + request.getStatus());
+    }
+
+    @Override
+    public void cancelAndRestock(String orderId) {
+        IntakeRequest request = repository.findById(orderId);
+        if (request == null || request.getStatus() == IntakeStatus.CANCELLED) {
+            return;
+        }
+        boolean stockWasReserved = request.getStatus() == IntakeStatus.INVENTORY_RESERVED;
+        request.transitionTo(IntakeStatus.CANCELLED);
+        if (stockWasReserved) {
+            inventoryRepository.increment(request.getItems());
+        }
         repository.save(request);
-
-        System.out.println("[Acceptance] Заказ " + orderId + " успешно принят. Статус: " + request.getStatus());
-        return orderId;
+        System.out.println("[Acceptance] Order " + orderId + " cancelled, stock returned to the inventory.");
     }
 
-    // --------------------------------------------------------
-    // КОМПЕНСАЦИЯ №1: Если сломалась Кухня (Шаг B)
-    // --------------------------------------------------------
     @Override
-    public void compensateAndReturnItems(String orderId) {
+    public void cancelWithoutRestock(String orderId) {
         IntakeRequest request = repository.findById(orderId);
-        if (request != null && request.getStatus() != IntakeStatus.CANCELLED) {
-            request.transitionTo(IntakeStatus.CANCELLED);
-
-            // ФИЗИЧЕСКИ ВОЗВРАЩАЕМ продукты на склад
-            inventoryChecker.returnItems(request.getItems());
-
-            repository.save(request);
-            System.out.println("[Acceptance - Компенсация] Заказ " + orderId + " отменен. Продукты возвращены на склад.");
+        if (request == null || request.getStatus() == IntakeStatus.CANCELLED) {
+            return;
         }
+        request.transitionTo(IntakeStatus.CANCELLED);
+        repository.save(request);
+        System.out.println("[Acceptance] Order " + orderId + " cancelled, stock written off as a loss.");
     }
 
-    // --------------------------------------------------------
-    // КОМПЕНСАЦИЯ №2: Если сломалась Оплата (Шаг C)
-    // --------------------------------------------------------
     @Override
-    public void compensateWithoutReturningItems(String orderId) {
-        IntakeRequest request = repository.findById(orderId);
-        if (request != null && request.getStatus() != IntakeStatus.CANCELLED) {
-            request.transitionTo(IntakeStatus.CANCELLED);
-
-            // Продукты сгорели на кухне, на склад не возвращаем
-            repository.save(request);
-            System.out.println("[Acceptance - Компенсация] Заказ " + orderId + " отменен. Продукты списаны в убыток (уничтожены).");
-        }
-    }
-
-    // Вспомогательный метод для получения состояния заказа
-    public IntakeRequest getRequest(String orderId) {
+    public IntakeRequest getOrder(String orderId) {
         return repository.findById(orderId);
+    }
+
+    /** Exposes the inventory gateway so callers can inspect the stock (admin/demo use). */
+    public int stockOf(String ingredient) {
+        return inventoryRepository.getQuantity(ingredient);
     }
 }

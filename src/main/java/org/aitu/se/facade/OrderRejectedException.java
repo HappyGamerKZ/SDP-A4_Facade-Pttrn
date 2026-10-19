@@ -1,8 +1,21 @@
 package org.aitu.se.facade;
 
-// Заказ отклонен на первом шаге (A): ничего не закоммичено, компенсировать нечего
+/**
+ * Thrown when step A rejects an order (for example, because the inventory cannot satisfy it).
+ *
+ * <p>Nothing downstream was committed, so there is nothing to compensate. The exception carries
+ * the correlation id so the client can still inspect the persisted {@code REJECTED} chain record.
+ */
 public class OrderRejectedException extends RuntimeException {
-    public OrderRejectedException(String message, Throwable cause) {
+
+    private final String orderId;
+
+    public OrderRejectedException(String orderId, String message, Throwable cause) {
         super(message, cause);
+        this.orderId = orderId;
+    }
+
+    public String getOrderId() {
+        return orderId;
     }
 }

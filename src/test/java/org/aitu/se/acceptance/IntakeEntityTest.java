@@ -1,31 +1,34 @@
 package org.aitu.se.acceptance;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
+/**
+ * Unit tests for subsystem A: the {@link IntakeRequest} lifecycle and the pure
+ * {@link InventoryChecker} rule.
+ */
 class IntakeEntityTest {
 
-    private Map<String, Integer> items;
-
-    @BeforeEach
-    void setUp() {
-        items = new HashMap<>();
-        items.put("Burger", 2);
+    private static Map<String, Integer> orderOf(String dish, int qty) {
+        Map<String, Integer> items = new LinkedHashMap<>();
+        items.put(dish, qty);
+        return items;
     }
 
     @Test
-    @DisplayName("Проверка успешных переходов статуса IntakeRequest")
-    void testValidStatusTransitions() {
-        IntakeRequest request = new IntakeRequest("ORD-1", items);
+    @DisplayName("IntakeRequest follows NEW -> INVENTORY_RESERVED -> CANCELLED")
+    void validLifecycle() {
+        IntakeRequest request = new IntakeRequest("ORD-1", orderOf("Burger", 2));
         assertEquals(IntakeStatus.NEW, request.getStatus());
         assertEquals("ORD-1", request.getOrderId());
-        assertEquals(items, request.getItems());
+        assertEquals(orderOf("Burger", 2), request.getItems());
 
         request.transitionTo(IntakeStatus.INVENTORY_RESERVED);
         assertEquals(IntakeStatus.INVENTORY_RESERVED, request.getStatus());
@@ -35,41 +38,51 @@ class IntakeEntityTest {
     }
 
     @Test
-    @DisplayName("Проверка запрещенных переходов статуса IntakeRequest")
-    void testInvalidStatusTransitions() {
-        IntakeRequest request = new IntakeRequest("ORD-1", items);
-
-        // Нельзя из NEW сразу в CANCELLED
-        assertThrows(IllegalStateException.class, () -> request.transitionTo(IntakeStatus.CANCELLED));
-
-        request.transitionTo(IntakeStatus.INVENTORY_RESERVED);
-        // Нельзя повторно в INVENTORY_RESERVED
-        assertThrows(IllegalStateException.class, () -> request.transitionTo(IntakeStatus.INVENTORY_RESERVED));
+    @DisplayName("An order rejected before reservation goes straight to CANCELLED")
+    void rejectedBeforeReservation() {
+        IntakeRequest request = new IntakeRequest("ORD-2", orderOf("Burger", 1));
 
         request.transitionTo(IntakeStatus.CANCELLED);
-        // Из CANCELLED нельзя никуда перейти
+
+        assertEquals(IntakeStatus.CANCELLED, request.getStatus());
+    }
+
+    @Test
+    @DisplayName("Forbidden transitions are rejected and CANCELLED is final")
+    void forbiddenTransitions() {
+        IntakeRequest request = new IntakeRequest("ORD-3", orderOf("Burger", 1));
+        request.transitionTo(IntakeStatus.INVENTORY_RESERVED);
+
+        assertThrows(IllegalStateException.class, () -> request.transitionTo(IntakeStatus.INVENTORY_RESERVED));
+        assertThrows(IllegalStateException.class, () -> request.transitionTo(IntakeStatus.NEW));
+
+        request.transitionTo(IntakeStatus.CANCELLED);
         assertThrows(IllegalStateException.class, () -> request.transitionTo(IntakeStatus.INVENTORY_RESERVED));
     }
 
     @Test
-    @DisplayName("Проверка конструктора с полным набором параметров")
-    void testFullConstructor() {
-        IntakeRequest request = new IntakeRequest("ORD-2", items, IntakeStatus.INVENTORY_RESERVED);
+    @DisplayName("The full constructor restores a persisted status")
+    void fullConstructor() {
+        IntakeRequest request = new IntakeRequest("ORD-4", orderOf("Burger", 1), IntakeStatus.INVENTORY_RESERVED);
         assertEquals(IntakeStatus.INVENTORY_RESERVED, request.getStatus());
     }
 
     @Test
-    @DisplayName("Проверка исключения OutOfStockException")
-    void testOutOfStockException() {
-        OutOfStockException ex = new OutOfStockException("Ошибка склада");
-        assertEquals("Ошибка склада", ex.getMessage());
+    @DisplayName("InventoryChecker accepts a satisfiable order and rejects the rest")
+    void inventoryChecker() {
+        InventoryChecker checker = new InventoryChecker();
+        Map<String, Integer> stock = orderOf("Burger", 5);
+
+        assertDoesNotThrow(() -> checker.ensureSufficientStock(stock, orderOf("Burger", 5)));
+        assertThrows(OutOfStockException.class, () -> checker.ensureSufficientStock(stock, orderOf("Burger", 6)));
+        assertThrows(OutOfStockException.class, () -> checker.ensureSufficientStock(stock, orderOf("Cola", 1)));
+        assertThrows(OutOfStockException.class, () -> checker.ensureSufficientStock(stock, orderOf("Burger", 0)));
+        assertThrows(OutOfStockException.class, () -> checker.ensureSufficientStock(stock, new LinkedHashMap<>()));
     }
 
     @Test
-    @DisplayName("Проверка всех значений Enum IntakeStatus")
-    void testEnumValues() {
-        for (IntakeStatus status : IntakeStatus.values()) {
-            assertNotNull(IntakeStatus.valueOf(status.name()));
-        }
+    @DisplayName("OutOfStockException carries its message")
+    void exceptionMessage() {
+        assertEquals("out of stock", new OutOfStockException("out of stock").getMessage());
     }
 }

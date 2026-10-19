@@ -1,20 +1,31 @@
 package org.aitu.se.backhouse;
 
+/**
+ * Entity of subsystem B: a kitchen ticket with a strict lifecycle.
+ *
+ * <p>Allowed transitions:
+ * <ul>
+ *   <li>{@code PENDING_STATION -> PREPARING} — a station was assigned</li>
+ *   <li>{@code PREPARING -> QUALITY_PASSED} — the meal was cooked and checked</li>
+ *   <li>{@code * -> WASTED} — scrapped or cancelled from any active state (used for compensation)</li>
+ * </ul>
+ * {@code WASTED} is terminal.
+ */
 public class KitchenTicket {
     private final String ticketId;
-    private final String orderId; // Ссылка на заказ из подсистемы А
+    private final String orderId; // reference to the order in subsystem A
     private KitchenStatus status;
     private int stationId;
 
-    // Конструктор для нового тикета
+    /** Creates a brand-new ticket; no station is assigned yet. */
     public KitchenTicket(String ticketId, String orderId) {
         this.ticketId = ticketId;
         this.orderId = orderId;
         this.status = KitchenStatus.PENDING_STATION;
-        this.stationId = -1; // Станция еще не назначена
+        this.stationId = -1;
     }
 
-    // Конструктор для чтения из БД
+    /** Used by the repository when reading an existing ticket back from the database. */
     public KitchenTicket(String ticketId, String orderId, KitchenStatus status, int stationId) {
         this.ticketId = ticketId;
         this.orderId = orderId;
@@ -24,7 +35,7 @@ public class KitchenTicket {
 
     public void transitionTo(KitchenStatus newStatus) {
         if (this.status == KitchenStatus.WASTED) {
-            throw new IllegalStateException("Нельзя менять статус отбракованного/отмененного тикета.");
+            throw new IllegalStateException("A wasted or cancelled ticket cannot change its status.");
         }
 
         if (this.status == KitchenStatus.PENDING_STATION && newStatus == KitchenStatus.PREPARING) {
@@ -32,9 +43,9 @@ public class KitchenTicket {
         } else if (this.status == KitchenStatus.PREPARING && newStatus == KitchenStatus.QUALITY_PASSED) {
             this.status = newStatus;
         } else if (newStatus == KitchenStatus.WASTED) {
-            this.status = newStatus; // Переход в WASTED разрешен из любого активного состояния (для отката)
+            this.status = newStatus; // allowed from any active state (rollback)
         } else {
-            throw new IllegalStateException("Запрещенный переход на кухне: " + this.status + " -> " + newStatus);
+            throw new IllegalStateException("Forbidden kitchen transition: " + this.status + " -> " + newStatus);
         }
     }
 
