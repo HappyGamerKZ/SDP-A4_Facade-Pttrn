@@ -3,6 +3,8 @@ package org.aitu.se.facade;
 import org.aitu.se.acceptance.IOrderQueue;
 import org.aitu.se.acceptance.IntakeRequest;
 import org.aitu.se.backhouse.ICookingStationAllocator;
+import org.aitu.se.backhouse.KitchenStatus;
+import org.aitu.se.backhouse.KitchenTicket;
 import org.aitu.se.checkout.CheckoutStatus;
 import org.aitu.se.checkout.IBillingModule;
 import org.aitu.se.checkout.Receipt;
@@ -70,7 +72,10 @@ public class AdminCompensationFacade {
         System.out.println("[AdminFacade] Cancelling order " + orderId + " from state " + record.state);
 
         switch (record.state) {
-            case COMPLETED -> {
+            case COMPLETED, PENDING_C -> {
+                // Same situation in both cases: the kitchen committed and the customer may have
+                // been charged. refundIfPaid() checks the persisted receipt, so money is returned
+                // exactly when the payment already went through.
                 refundIfPaid(record.ticketId);
                 if (record.ticketId != null) {
                     kitchenAllocator.compensateTicket(record.ticketId);
@@ -78,17 +83,7 @@ public class AdminCompensationFacade {
                 orderQueue.cancelWithoutRestock(orderId);
                 stateManager.updateState(orderId, record.ticketId, ChainState.COMPENSATED_AT_C);
             }
-            case PENDING_C -> {
-                if (record.ticketId != null) {
-                    kitchenAllocator.compensateTicket(record.ticketId);
-                }
-                orderQueue.cancelWithoutRestock(orderId);
-                stateManager.updateState(orderId, record.ticketId, ChainState.COMPENSATED_AT_C);
-            }
-            case STARTED, PENDING_B -> {
-                orderQueue.cancelAndRestock(orderId);
-                stateManager.updateState(orderId, null, ChainState.COMPENSATED_AT_B);
-            }
+            case STARTED, PENDING_B -> unwindBeforeCheckout(orderId);
             case COMPENSATED_AT_A, COMPENSATED_AT_B, COMPENSATED_AT_C, REJECTED -> {
                 System.out.println("[AdminFacade] Order " + orderId + " is already finished (" + record.state + ").");
                 return false;
@@ -96,6 +91,25 @@ public class AdminCompensationFacade {
         }
         System.out.println("[AdminFacade] Order " + orderId + " cancelled.");
         return true;
+    }
+
+    /**
+     * Cancels an order the kitchen never finished. Mirrors the primary facade's recovery: if a
+     * meal was already cooked the ingredients are consumed, so they are written off instead of
+     * being returned to the inventory; otherwise the reservation is undone with a restock.
+     */
+    private void unwindBeforeCheckout(String orderId) {
+        KitchenTicket ticket = kitchenAllocator.findByOrderId(orderId);
+        boolean mealPrepared = ticket != null && ticket.getStatus() == KitchenStatus.QUALITY_PASSED;
+        if (ticket != null && ticket.getStatus() != KitchenStatus.WASTED) {
+            kitchenAllocator.compensateTicket(ticket.getTicketId());
+        }
+        if (mealPrepared) {
+            orderQueue.cancelWithoutRestock(orderId);
+        } else {
+            orderQueue.cancelAndRestock(orderId);
+        }
+        stateManager.updateState(orderId, ticket == null ? null : ticket.getTicketId(), ChainState.COMPENSATED_AT_B);
     }
 
     private void refundIfPaid(String ticketId) {

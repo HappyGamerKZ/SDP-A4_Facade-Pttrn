@@ -198,6 +198,24 @@ class RestaurantOrderFacadeTest {
     }
 
     @Test
+    @DisplayName("Reload: recovery of STARTED is idempotent and never double-restocks")
+    void reloadStartedRecoveryIsIdempotent() {
+        // Reproduce a recovery pass that restocked and cancelled the order, but did not manage to
+        // persist its outcome: the chain is still STARTED and the order is already CANCELLED.
+        scenario.orderQueue.acceptNewOrder("ORD-STARTED-3", FacadeScenario.orderOf("Burger", 3));
+        scenario.orderQueue.cancelAndRestock("ORD-STARTED-3");
+        scenario.chain.updateState("ORD-STARTED-3", null, ChainState.STARTED);
+
+        FacadeScenario restarted = scenario.reopen();
+        restarted.facade.recoverIncompleteTransactions();
+
+        // The re-run must not mislabel the chain as REJECTED nor return the ingredients a second time.
+        restarted.assertChainState("ORD-STARTED-3", ChainState.COMPENSATED_AT_A);
+        restarted.assertOrderStatus("ORD-STARTED-3", IntakeStatus.CANCELLED);
+        restarted.assertStock("Burger", 100);
+    }
+
+    @Test
     @DisplayName("Recovery is a no-op when nothing was interrupted")
     void recoveryIsNoOpWhenNothingPending() {
         assertDoesNotThrow(() -> scenario.facade.recoverIncompleteTransactions());

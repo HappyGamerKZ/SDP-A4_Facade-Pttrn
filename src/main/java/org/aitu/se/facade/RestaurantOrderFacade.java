@@ -143,8 +143,15 @@ public class RestaurantOrderFacade {
     /** Interrupted before step A confirmed: undo A only if it actually committed the reservation. */
     private void recoverStarted(ChainStateRecord record) {
         IntakeRequest request = orderQueue.getOrder(record.orderId);
-        if (request != null && request.getStatus() == IntakeStatus.INVENTORY_RESERVED) {
+        if (request == null) {
+            // Step A never created anything, so there is nothing to undo.
+            stateManager.updateState(record.orderId, null, ChainState.REJECTED);
+        } else if (request.getStatus() == IntakeStatus.INVENTORY_RESERVED) {
             orderQueue.cancelAndRestock(record.orderId);
+            stateManager.updateState(record.orderId, null, ChainState.COMPENSATED_AT_A);
+        } else if (request.getStatus() == IntakeStatus.CANCELLED) {
+            // A previous recovery pass already unwound step A but did not manage to persist its
+            // outcome; keep the same terminal state instead of mislabelling it as REJECTED.
             stateManager.updateState(record.orderId, null, ChainState.COMPENSATED_AT_A);
         } else {
             stateManager.updateState(record.orderId, null, ChainState.REJECTED);

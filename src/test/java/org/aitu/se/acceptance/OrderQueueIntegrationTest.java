@@ -80,6 +80,18 @@ class OrderQueueIntegrationTest {
     }
 
     @Test
+    @DisplayName("Restocking compensation is idempotent: a repeated call never restocks twice")
+    void cancelAndRestockIsIdempotent() {
+        orderQueue.acceptNewOrder("ORD-IDEMP", orderOf("Burger", 2));
+
+        orderQueue.cancelAndRestock("ORD-IDEMP");
+        orderQueue.cancelAndRestock("ORD-IDEMP");
+
+        assertEquals(IntakeStatus.CANCELLED, orderQueue.getOrder("ORD-IDEMP").getStatus());
+        assertEquals(100, orderQueue.stockOf("Burger"));
+    }
+
+    @Test
     @DisplayName("Compensating an unknown order is a harmless no-op")
     void compensateUnknownOrderIsNoOp() {
         assertDoesNotThrow(() -> orderQueue.cancelAndRestock("NO-SUCH"));

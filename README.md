@@ -285,16 +285,18 @@ The subsystems fail for reasons that are read from their own persisted state; th
 
 ## 9. Tests
 
-46 JUnit 5 tests. The facade tests assert the **persisted end state of all three subsystems**, not
+50 JUnit 5 tests. The facade tests assert the **persisted end state of all three subsystems**, not
 just the returned object, and the recovery tests use a **real reload**:
 
 * `RestaurantOrderFacadeTest` — happy path, each failure path, and recovery after
   `FacadeScenario#reopen()` builds *brand-new* subsystem objects on the *same database file*:
   unpaid `PENDING_C` is unwound, paid `PENDING_C` is resumed to `COMPLETED`, `PENDING_B` is undone
-  with/without restock, `STARTED` is resolved with/without a committed reservation.
-* `AdminCompensationFacadeTest` — inspection methods and state-aware cancellation with refund.
+  with/without restock, `STARTED` is resolved with/without a committed reservation, and a repeated
+  `STARTED` pass is proven idempotent (no double restock, no state flip).
+* `AdminCompensationFacadeTest` — inspection methods and state-aware cancellation with refund,
+  including the "meal already cooked" and "already paid" cases.
 * `OrderQueueIntegrationTest`, `SubsystemDirectUseTest` — subsystems A/B/C used directly, on their
-  own databases, without the facade.
+  own databases, without the facade; the restock compensation is asserted to be idempotent.
 * `IntakeEntityTest`, `BackhouseEntityTest`, `CheckoutEntityTest` — entity lifecycles and the pure
   rule classes (`InventoryChecker`, `QualityChecker`, `PaymentPolicy`).
 
@@ -337,5 +339,5 @@ src/main/java/org/aitu/se/
     ├── IChainStateManager.java  ChainStateManager.java  ChainState.java
     ├── OrderResult.java  OrderRejectedException.java
 
-src/test/java/org/aitu/se/          # 46 tests (see section 9)
+src/test/java/org/aitu/se/          # 50 tests (see section 9)
 ```

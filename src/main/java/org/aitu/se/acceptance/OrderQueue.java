@@ -59,10 +59,13 @@ public class OrderQueue implements IOrderQueue {
         }
         boolean stockWasReserved = request.getStatus() == IntakeStatus.INVENTORY_RESERVED;
         request.transitionTo(IntakeStatus.CANCELLED);
+        // Persist the CANCELLED marker before touching the inventory. The status guard above is
+        // what makes this compensation idempotent, so it has to be durable *before* the stock
+        // effect; a crash in between can lose one restock, but can never restock twice.
+        repository.save(request);
         if (stockWasReserved) {
             inventoryRepository.increment(request.getItems());
         }
-        repository.save(request);
         System.out.println("[Acceptance] Order " + orderId + " cancelled, stock returned to the inventory.");
     }
 

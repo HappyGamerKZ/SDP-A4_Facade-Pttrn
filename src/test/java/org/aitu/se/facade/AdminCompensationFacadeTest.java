@@ -87,6 +87,24 @@ class AdminCompensationFacadeTest {
     }
 
     @Test
+    @DisplayName("Force-cancel of a PENDING_B order whose meal was already cooked does not restock")
+    void forceCancelOfPendingBWithPreparedMeal() {
+        String orderId = "ORD-ADMIN-B-COOKED";
+        scenario.orderQueue.acceptNewOrder(orderId, FacadeScenario.orderOf("Burger", 2));
+        // The kitchen finished the dish, but the process died before the chain advanced to PENDING_C.
+        String ticketId = scenario.kitchen.startCooking(orderId, FacadeScenario.orderOf("Burger", 2));
+        scenario.chain.updateState(orderId, ticketId, ChainState.PENDING_B);
+
+        assertTrue(scenario.admin.forceCancelOrder(orderId));
+
+        scenario.assertChainState(orderId, ChainState.COMPENSATED_AT_B);
+        scenario.assertOrderStatus(orderId, IntakeStatus.CANCELLED);
+        scenario.assertTicketStatus(orderId, KitchenStatus.WASTED);
+        // The ingredients were already consumed by the kitchen, so they must NOT return.
+        scenario.assertStock("Burger", 98);
+    }
+
+    @Test
     @DisplayName("Force-cancel of an interrupted PENDING_C order scraps the prepared meal")
     void forceCancelOfInterruptedPendingC() {
         OrderResult interrupted = scenario.facade.simulateCrashAfterKitchen(FacadeScenario.orderOf("Burger", 1), 2500.0);
@@ -95,6 +113,24 @@ class AdminCompensationFacadeTest {
 
         scenario.assertChainState(interrupted.orderId(), ChainState.COMPENSATED_AT_C);
         scenario.assertTicketStatus(interrupted.orderId(), KitchenStatus.WASTED);
+        scenario.assertStock("Burger", 99);
+    }
+
+    @Test
+    @DisplayName("Force-cancel of a PENDING_C order whose payment already went through refunds the customer")
+    void forceCancelOfPaidPendingC() {
+        OrderResult interrupted =
+                scenario.facade.simulateCrashAfterKitchen(FacadeScenario.orderOf("Burger", 1), 2500.0);
+        // The bank charged the card, but the process died before the chain was marked COMPLETED.
+        scenario.billing.processPayment(interrupted.ticketId(), 2500.0);
+        scenario.assertReceiptStatus(interrupted.ticketId(), CheckoutStatus.PAID_AND_DISPATCHED);
+
+        assertTrue(scenario.admin.forceCancelOrder(interrupted.orderId()));
+
+        scenario.assertChainState(interrupted.orderId(), ChainState.COMPENSATED_AT_C);
+        scenario.assertOrderStatus(interrupted.orderId(), IntakeStatus.CANCELLED);
+        scenario.assertTicketStatus(interrupted.orderId(), KitchenStatus.WASTED);
+        scenario.assertReceiptStatus(interrupted.ticketId(), CheckoutStatus.REFUNDED);
         scenario.assertStock("Burger", 99);
     }
 
