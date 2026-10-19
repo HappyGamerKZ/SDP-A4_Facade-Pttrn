@@ -64,4 +64,20 @@ public class ChainStateManager implements IChainStateManager {
         }
         return incomplete;
     }
+
+    @Override
+    public ChainStateRecord findByOrderId(String orderId) {
+        String sql = "SELECT ticket_id, state FROM chain_state WHERE order_id = ?";
+        try (Connection conn = DriverManager.getConnection(dbUrl);
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, orderId);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                return new ChainStateRecord(orderId, rs.getString("ticket_id"), ChainState.valueOf(rs.getString("state")));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("cant read chain state", e);
+        }
+        return null;
+    }
 }

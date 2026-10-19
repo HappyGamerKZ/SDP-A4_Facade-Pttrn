@@ -19,4 +19,7 @@ public interface IChainStateManager {
     }
 
     Map<String, ChainStateRecord> getIncompleteTransactions();
+
+    // null, если для заказа нет записи
+    ChainStateRecord findByOrderId(String orderId);
 }

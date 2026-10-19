@@ -60,6 +60,18 @@ public class InventoryChecker {
         }
     }
 
+    public int getQuantity(String ingredient) {
+        String sql = "SELECT qty FROM inventory WHERE ingredient = ?";
+        try (Connection conn = DriverManager.getConnection(dbUrl);
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, ingredient);
+            ResultSet rs = pstmt.executeQuery();
+            return rs.next() ? rs.getInt("qty") : 0;
+        } catch (SQLException e) {
+            throw new RuntimeException("Cant read stash", e);
+        }
+    }
+
     public void returnItems(Map<String, Integer> returnedItems) {
         String updateSql = "UPDATE inventory SET qty = qty + ? WHERE ingredient = ?";
         try (Connection conn = DriverManager.getConnection(dbUrl);

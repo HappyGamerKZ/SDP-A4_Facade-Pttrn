@@ -16,6 +16,7 @@ public class CookingStationAllocator implements ICookingStationAllocator {
     }
 
     // НОРМАЛЬНЫЙ ПОТОК (Шаг B)
+    // При любом сбое тикет переводится в WASTED: незавершенный шаг не оставляет за собой активных записей
     @Override
     public String startCooking(String orderId, boolean forceStationFail) {
         String ticketId = UUID.randomUUID().toString();
@@ -24,28 +25,37 @@ public class CookingStationAllocator implements ICookingStationAllocator {
 
         System.out.println("[Backhouse] Получен заказ " + orderId + ". Ищем свободную плиту...");
 
-        // Искусственная логика для демонстрации падения Шага B (Требование 3.4)
-        if (forceStationFail || activeStations >= MAX_STATIONS) {
-            throw new NoAvailableStationsException("Нет свободных кухонных зон для заказа " + orderId);
+        try {
+            // Искусственная логика для демонстрации падения Шага B (Требование 3.4)
+            if (forceStationFail || activeStations >= MAX_STATIONS) {
+                throw new NoAvailableStationsException("Нет свободных кухонных зон для заказа " + orderId);
+            }
+
+            // Выделяем станцию и начинаем готовить
+            activeStations++;
+            try {
+                ticket.setStationId(activeStations);
+                ticket.transitionTo(KitchenStatus.PREPARING);
+                repository.save(ticket);
+                System.out.println("[Backhouse] Блюдо готовится на станции №" + ticket.getStationId());
+
+                // Проверяем качество
+                qualityChecker.verifyMeal(ticket, forceStationFail);
+
+                // Завершаем готовку
+                ticket.transitionTo(KitchenStatus.QUALITY_PASSED);
+                repository.save(ticket);
+                System.out.println("[Backhouse] Тикет " + ticketId + " готов к выдаче!");
+            } finally {
+                activeStations--; // Освобождаем станцию даже при сбое
+            }
+            return ticketId;
+        } catch (RuntimeException e) {
+            ticket.transitionTo(KitchenStatus.WASTED);
+            repository.save(ticket);
+            System.out.println("[Backhouse] Тикет " + ticketId + " не выполнен и помечен как WASTED.");
+            throw e;
         }
-
-        // Выделяем станцию и начинаем готовить
-        activeStations++;
-        ticket.setStationId(activeStations);
-        ticket.transitionTo(KitchenStatus.PREPARING);
-        repository.save(ticket);
-        System.out.println("[Backhouse] Блюдо готовится на станции №" + ticket.getStationId());
-
-        // Проверяем качество
-        qualityChecker.verifyMeal(ticket, forceStationFail);
-
-        // Завершаем готовку
-        ticket.transitionTo(KitchenStatus.QUALITY_PASSED);
-        repository.save(ticket);
-        System.out.println("[Backhouse] Тикет " + ticketId + " готов к выдаче!");
-
-        activeStations--; // Освобождаем станцию
-        return ticketId;
     }
 
     // КОМПЕНСАЦИЯ: Откат на кухне (когда упал Шаг C - Оплата)

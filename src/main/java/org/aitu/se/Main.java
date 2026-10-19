@@ -40,22 +40,31 @@ public class Main {
             int choice = scanner.nextInt();
             if (choice == 0) break;
 
-            switch (choice) {
-                case 1:
-                    facade.processOrder(defaultOrder, 5000.0, false, false, false);
-                    break;
-                case 2:
-                    facade.processOrder(defaultOrder, 5000.0, true, false, false);
-                    break;
-                case 3:
-                    facade.processOrder(defaultOrder, 5000.0, false, true, false);
-                    break;
-                case 4:
-                    // Это закроет пункт 3.7 "persistence-reload test"
-                    facade.processOrder(defaultOrder, 5000.0, false, false, true);
-                    System.out.println("ПРОГРАММА ПРЕРВАНА. Перезапустите приложение (или нажмите 5), чтобы увидеть восстановление.");
-                    return; // Реальный выход из программы для симуляции!
+            try {
+                switch (choice) {
+                    case 1:
+                        printResult(facade.processOrder(defaultOrder, 5000.0, false, false, false));
+                        break;
+                    case 2:
+                        printResult(facade.processOrder(defaultOrder, 5000.0, true, false, false));
+                        break;
+                    case 3:
+                        printResult(facade.processOrder(defaultOrder, 5000.0, false, true, false));
+                        break;
+                    case 4:
+                        // Это закроет пункт 3.7 "persistence-reload test"
+                        printResult(facade.processOrder(defaultOrder, 5000.0, false, false, true));
+                        System.out.println("ПРОГРАММА ПРЕРВАНА. Перезапустите приложение, чтобы увидеть восстановление.");
+                        return; // Реальный выход из программы для симуляции!
+                }
+            } catch (OrderRejectedException e) {
+                System.out.println("[Client] Заказ не принят: " + e.getMessage());
             }
         }
+    }
+
+    private static void printResult(OrderResult result) {
+        System.out.println("[Client] Заказ " + result.orderId() + " -> " + result.state()
+                + (result.failureReason() != null ? " (причина: " + result.failureReason() + ")" : ""));
     }
 }

@@ -1,6 +1,8 @@
 package org.aitu.se.backhouse;
 
 import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
 
 public class KitchenRepository {
     private final String dbUrl;
@@ -55,5 +57,22 @@ public class KitchenRepository {
             throw new RuntimeException("cant read from Kitchen", e);
         }
         return null;
+    }
+
+    public List<KitchenTicket> findByOrderId(String orderId) {
+        String sql = "SELECT ticket_id, status, station_id FROM kitchen_tickets WHERE order_id = ?";
+        List<KitchenTicket> tickets = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection(dbUrl);
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, orderId);
+            ResultSet rs = pstmt.executeQuery();
+            while (rs.next()) {
+                KitchenStatus status = KitchenStatus.valueOf(rs.getString("status"));
+                tickets.add(new KitchenTicket(rs.getString("ticket_id"), orderId, status, rs.getInt("station_id")));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("cant read from Kitchen", e);
+        }
+        return tickets;
     }
 }

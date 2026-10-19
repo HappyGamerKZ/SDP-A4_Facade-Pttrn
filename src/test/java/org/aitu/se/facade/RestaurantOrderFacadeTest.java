@@ -1,7 +1,12 @@
 package org.aitu.se.facade;
 
+import org.aitu.se.acceptance.IntakeStatus;
+import org.aitu.se.acceptance.InventoryChecker;
 import org.aitu.se.acceptance.OrderQueue;
 import org.aitu.se.backhouse.CookingStationAllocator;
+import org.aitu.se.backhouse.KitchenRepository;
+import org.aitu.se.backhouse.KitchenStatus;
+import org.aitu.se.backhouse.KitchenTicket;
 import org.aitu.se.checkout.BillingModule;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -11,6 +16,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -22,6 +28,8 @@ class RestaurantOrderFacadeTest {
     private OrderQueue orderQueue;
     private CookingStationAllocator kitchenAllocator;
     private BillingModule billingModule;
+    private InventoryChecker inventory;
+    private KitchenRepository kitchenTickets;
 
     private String dbUrl;
 
@@ -43,6 +51,8 @@ class RestaurantOrderFacadeTest {
         kitchenAllocator = new CookingStationAllocator(dbUrl);
         billingModule = new BillingModule(dbUrl);
         stateManager = new ChainStateManager(dbUrl);
+        inventory = new InventoryChecker(dbUrl);
+        kitchenTickets = new KitchenRepository(dbUrl);
 
         facade = new RestaurantOrderFacade(
                 orderQueue, kitchenAllocator,
@@ -55,35 +65,67 @@ class RestaurantOrderFacadeTest {
     void testProcessOrderSuccess() {
         Map<String, Integer> items = new HashMap<>();
         items.put("Burger", 1);
+        int stockBefore = inventory.getQuantity("Burger");
 
-        assertDoesNotThrow(() -> facade.processOrder(items, 2500.0, false, false, false));
+        OrderResult result = facade.processOrder(items, 2500.0, false, false, false);
+
+        assertTrue(result.isCompleted());
+        assertNotNull(result.receiptId());
+        assertEquals(ChainState.COMPLETED, stateManager.findByOrderId(result.orderId()).state);
+        assertEquals(IntakeStatus.INVENTORY_RESERVED, orderQueue.getRequest(result.orderId()).getStatus());
+        assertEquals(KitchenStatus.QUALITY_PASSED, kitchenTickets.findById(result.ticketId()).getStatus());
+        assertEquals(stockBefore - 1, inventory.getQuantity("Burger"));
     }
 
     @Test
-    @DisplayName("Ошибка на этапе А (Нехватка складских запасов)")
+    @DisplayName("Ошибка на этапе А (Нехватка складских запасов) -> заказ отклонен, ничего не записано")
     void testProcessOrderOutOfStock() {
         Map<String, Integer> items = new HashMap<>();
         items.put("Burger", 10000);
+        int stockBefore = inventory.getQuantity("Burger");
 
-        assertDoesNotThrow(() -> facade.processOrder(items, 2500.0, false, false, false));
+        assertThrows(OrderRejectedException.class,
+                () -> facade.processOrder(items, 2500.0, false, false, false));
+
+        assertEquals(stockBefore, inventory.getQuantity("Burger"));
+        assertTrue(stateManager.getIncompleteTransactions().isEmpty());
     }
 
     @Test
-    @DisplayName("Сбой на этапе B (Кухня) -> Компенсация B -> A (Возврат продуктов)")
+    @DisplayName("Сбой на этапе B (Кухня) -> Компенсация A (Возврат продуктов)")
     void testProcessOrderKitchenFailure() {
         Map<String, Integer> items = new HashMap<>();
         items.put("Burger", 1);
+        int stockBefore = inventory.getQuantity("Burger");
 
-        assertDoesNotThrow(() -> facade.processOrder(items, 2500.0, true, false, false));
+        OrderResult result = facade.processOrder(items, 2500.0, true, false, false);
+
+        assertEquals(ChainState.COMPENSATED_AT_B, result.state());
+        assertNotNull(result.failureReason());
+        assertEquals(ChainState.COMPENSATED_AT_B, stateManager.findByOrderId(result.orderId()).state);
+        assertEquals(IntakeStatus.CANCELLED, orderQueue.getRequest(result.orderId()).getStatus());
+        assertEquals(stockBefore, inventory.getQuantity("Burger"));
+        // Частично созданный тикет кухни не остается висеть в активном статусе
+        List<KitchenTicket> tickets = kitchenTickets.findByOrderId(result.orderId());
+        assertEquals(1, tickets.size());
+        assertEquals(KitchenStatus.WASTED, tickets.get(0).getStatus());
     }
 
     @Test
-    @DisplayName("Сбой на этапе C (Оплата) -> Компенсация C -> B -> A (Списание продуктов)")
+    @DisplayName("Сбой на этапе C (Оплата) -> Компенсация B, затем A (Списание продуктов)")
     void testProcessOrderPaymentFailure() {
         Map<String, Integer> items = new HashMap<>();
         items.put("Burger", 1);
+        int stockBefore = inventory.getQuantity("Burger");
 
-        assertDoesNotThrow(() -> facade.processOrder(items, 2500.0, false, true, false));
+        OrderResult result = facade.processOrder(items, 2500.0, false, true, false);
+
+        assertEquals(ChainState.COMPENSATED_AT_C, result.state());
+        assertEquals(ChainState.COMPENSATED_AT_C, stateManager.findByOrderId(result.orderId()).state);
+        assertEquals(KitchenStatus.WASTED, kitchenTickets.findById(result.ticketId()).getStatus());
+        assertEquals(IntakeStatus.CANCELLED, orderQueue.getRequest(result.orderId()).getStatus());
+        // Блюдо уже приготовлено -> продукты на склад не возвращаются
+        assertEquals(stockBefore - 1, inventory.getQuantity("Burger"));
     }
 
     @Test
